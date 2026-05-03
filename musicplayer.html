@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Streamer Music Overlay</title>
+    <style>
+        :root {
+            --accent-color: #ff0000;
+            --bg-color: rgba(0, 0, 0, 0.95);
+            --scroll-speed: 10s;
+        }
+
+        body {
+            margin: 0;
+            padding: 20px;
+            overflow: hidden;
+            background-color: transparent; 
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
+
+        #overlay-wrapper {
+            display: flex;
+            align-items: center;
+            background: var(--bg-color);
+            border-radius: 0 0 12px 12px;
+            padding: 12px;
+            width: 420px; 
+            height: 60px;
+            border-left: 6px solid var(--accent-color);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            position: relative;
+            z-index: 2;
+        }
+
+        #spectrum-container {
+            width: 444px;
+            height: 20px;
+            display: flex;
+            align-items: flex-end;
+            gap: 2px;
+            padding: 0;
+            margin-bottom: -2px;
+        }
+
+        .bar {
+            flex: 1;
+            background: var(--accent-color);
+            height: 3px;
+            transition: height 0.2s ease;
+        }
+
+        .playing .bar {
+            animation: bounce 0.8s ease-in-out infinite alternate;
+        }
+
+        @keyframes bounce {
+            0% { height: 3px; }
+            100% { height: 20px; }
+        }
+
+        .bar:nth-child(2n) { animation-duration: 0.6s; }
+        .bar:nth-child(3n) { animation-duration: 0.9s; }
+        .bar:nth-child(4n) { animation-duration: 0.5s; }
+        .bar:nth-child(5n) { animation-duration: 1.1s; }
+
+        #thumbnail {
+            width: 100px; height: 56px;
+            border-radius: 4px;
+            object-fit: cover;
+            margin-right: 15px;
+            flex-shrink: 0;
+            background: #222;
+        }
+
+        .text-info {
+            display: flex;
+            flex-direction: column;
+            color: var(--accent-color);
+            flex-grow: 1;
+            overflow: hidden;
+        }
+
+        .meta-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 11px;
+            color: #aaaaaa;
+            margin-bottom: 2px;
+        }
+
+        #timer { color: var(--accent-color); font-weight: bold; }
+
+        #title-scroll-container { overflow: hidden; white-space: nowrap; width: 100%; }
+        #song-title { font-size: 15px; font-weight: bold; display: inline-block; padding-right: 30px; }
+        .scrolling #song-title { animation: scroll-left var(--scroll-speed) linear infinite; }
+
+        @keyframes scroll-left {
+            0% { transform: translateX(0); }
+            15% { transform: translateX(0); }
+            100% { transform: translateX(-100%); }
+        }
+
+        #controls {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(15, 15, 15, 0.98);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 8px;
+            box-sizing: border-box;
+            border-radius: 0 0 12px 12px;
+            z-index: 10;
+            opacity: 0; 
+            pointer-events: none; 
+            transition: opacity 0.2s ease;
+        }
+
+        #overlay-wrapper:hover #controls { opacity: 1; pointer-events: auto; }
+
+        .nav-row { display: flex; gap: 8px; margin-bottom: 6px; }
+
+        .btn { 
+            background: var(--accent-color); 
+            color: white; 
+            border: none; 
+            padding: 4px 10px; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            font-size: 10px; 
+            font-weight: bold;
+        }
+
+        #playlist-library {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            justify-content: center;
+        }
+
+        .lib-item {
+            background: #333;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 9px;
+            color: white;
+            cursor: pointer;
+            border: 1px solid transparent;
+            text-transform: uppercase;
+        }
+        .lib-item:hover { border-color: var(--accent-color); background: #444; }
+
+        #player { position: absolute; top: -9999px; }
+    </style>
+</head>
+<body>
+
+    <div id="spectrum-container"></div>
+
+    <div id="overlay-wrapper">
+        <div id="controls">
+            <div class="nav-row">
+                <button class="btn" onclick="player.previousVideo()">PREV</button>
+                <button id="play-pause-btn" class="btn" onclick="togglePlay()">PAUSE</button>
+                <button class="btn" onclick="player.nextVideo()">NEXT</button>
+            </div>
+            <div id="playlist-library"></div>
+        </div>
+
+        <img id="thumbnail" src="" alt="">
+        <div class="text-info">
+            <div class="meta-row">
+                <span id="channel-name">LOADING...</span>
+                <span id="timer">0:00 / 0:00</span>
+            </div>
+            <div id="title-scroll-container">
+                <span id="song-title">Loading Playlist...</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="player"></div>
+
+    <script>
+        const specCont = document.getElementById('spectrum-container');
+        for(let i=0; i<40; i++) {
+            let bar = document.createElement('div');
+            bar.className = 'bar';
+            specCont.appendChild(bar);
+        }
+
+        var tag = document.createElement('script');
+        tag.src = "https://www.youtube.com/iframe_api";
+        document.head.appendChild(tag);
+
+        var player;
+        const playlists = [
+            { name: "Sonic Adventure", id: "PLqzVNX9DhzKGjln85maKU8aCyQV14Onsv" },
+            { name: "Main", id: "PLsogBv4yCzqv9Rq4XPMaHSiVdp0CFmyHW" },
+        ];
+
+        function onYouTubeIframeAPIReady() {
+            player = new YT.Player('player', {
+                height: '0', width: '0',
+                playerVars: { 
+                    'autoplay': 1, 
+                    'listType': 'playlist', 
+                    'list': playlists[0].id,
+                    'loop': 1 
+                },
+                events: {
+                    'onReady': onPlayerReady,
+                    'onStateChange': onPlayerStateChange
+                }
+            });
+        }
+
+        window.addEventListener('music_cmd', function(event) {
+            const action = event.detail.action;
+            if (action === 'next') player.nextVideo();
+            if (action === 'prev') player.previousVideo();
+            if (action === 'toggle') togglePlay();
+        });
+
+        function onPlayerReady(event) {
+            renderLibrary();
+            setInterval(updateTimer, 1000);
+            
+            // Explicitly set the player to loop the playlist
+            player.setLoop(true);
+            event.target.playVideo();
+        }
+
+        function togglePlay() {
+            const state = player.getPlayerState();
+            if (state == YT.PlayerState.PLAYING) {
+                player.pauseVideo();
+            } else {
+                player.playVideo();
+            }
+        }
+
+        function onPlayerStateChange(event) {
+            const spec = document.getElementById('spectrum-container');
+            const ppBtn = document.getElementById('play-pause-btn');
+
+            // FAIL-SAFE: If a song ends, force the next video if it doesn't happen automatically
+            if (event.data == YT.PlayerState.ENDED) {
+                player.nextVideo();
+            }
+
+            if (event.data == YT.PlayerState.PLAYING) {
+                spec.classList.add('playing');
+                ppBtn.innerText = "PAUSE";
+                
+                const data = player.getVideoData();
+                const titleEl = document.getElementById('song-title');
+                const scrollContainer = document.getElementById('title-scroll-container');
+                
+                scrollContainer.classList.remove('scrolling');
+                titleEl.innerText = data.title;
+                document.getElementById('channel-name').innerText = data.author;
+                document.getElementById('thumbnail').src = `https://img.youtube.com/vi/${data.video_id}/mqdefault.jpg`;
+
+                if (titleEl.scrollWidth > scrollContainer.offsetWidth) {
+                    scrollContainer.classList.add('scrolling');
+                }
+            } else {
+                spec.classList.remove('playing');
+                ppBtn.innerText = "PLAY";
+            }
+        }
+
+        function renderLibrary() {
+            const lib = document.getElementById('playlist-library');
+            lib.innerHTML = "";
+            playlists.forEach(p => {
+                const div = document.createElement('div');
+                div.className = 'lib-item';
+                div.innerText = p.name;
+                div.onclick = () => {
+                    player.loadPlaylist({list: p.id});
+                    player.setLoop(true); // Re-arm loop for new playlist
+                };
+                lib.appendChild(div);
+            });
+        }
+
+        function updateTimer() {
+            if (player && player.getCurrentTime) {
+                const curr = player.getCurrentTime();
+                const total = player.getDuration();
+                if (total > 0) {
+                    document.getElementById('timer').innerText = formatTime(curr) + " / " + formatTime(total);
+                }
+            }
+        }
+
+        function formatTime(time) {
+            time = Math.round(time);
+            var m = Math.floor(time / 60);
+            var s = time % 60;
+            return m + ":" + (s < 10 ? '0' + s : s);
+        }
+    </script>
+</body>
+</html>
