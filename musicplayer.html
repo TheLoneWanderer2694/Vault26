@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<!--
+  ******************************************************************************
+  * REACTIVE STREAM MUSIC OVERLAY
+  * Author: Dakota William Bradley
+  * 
+  * DIRECTIONS FOR SETUP:
+  * 
+  * 1. OBS SETUP:
+  *    - Add a new "Browser Source" in OBS pointing to this local HTML file.
+  *    - Width: 500 | Height: 150.
+  *    - Set "Page Permissions" to "Advanced (Full access to OBS)".
+  * 
+  * 2. STREAMER.BOT ACTIONS (OBS -> Raw Sub-Actions):
+  *
+  *    [SKIP NEXT] - Action: "Music - Next"
+  *    {
+  *      "requestType": "CallVendorRequest",
+  *      "requestData": {
+  *        "vendorName": "obs-browser", "requestType": "emit_event",
+  *        "requestData": { "event_name": "music_cmd", "event_data": { "action": "next" } }
+  *      }
+  *    }
+  *
+  *    [PREVIOUS] - Action: "Music - Prev"
+  *    {
+  *      "requestType": "CallVendorRequest",
+  *      "requestData": {
+  *        "vendorName": "obs-browser", "requestType": "emit_event",
+  *        "requestData": { "event_name": "music_cmd", "event_data": { "action": "prev" } }
+  *      }
+  *    }
+  *
+  *    [PAUSE/PLAY] - Action: "Music - Toggle"
+  *    {
+  *      "requestType": "CallVendorRequest",
+  *      "requestData": {
+  *        "vendorName": "obs-browser", "requestType": "emit_event",
+  *        "requestData": { "event_name": "music_cmd", "event_data": { "action": "toggle" } }
+  *      }
+  *    }
+  * 
+  * 3. TWITCH COMMANDS:
+  *    - Bind !next, !prev, and !pause to the actions created in Step 2.
+  ******************************************************************************
+-->
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reactive Stream Music Overlay</title>
+    <style>
+        :root {
+            --accent-color: #ff0000;
+            --bg-color: rgba(0, 0, 0, 0.95);
+            --font-main: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            margin: 0;
+            padding: 20px;
+            background-color: transparent; 
+            font-family: var(--font-main);
+            overflow: hidden;
+        }
+
+        /* 
+           SPECTRUM VISUALIZER 
+           Displays 40 bars that react based on the renderFrame logic.
+        */
+        #spectrum-container {
+            width: 444px;
+            height: 40px;
+            display: flex;
+            align-items: flex-end;
+            gap: 2px;
+            margin-bottom: -2px;
+        }
+
+        .bar {
+            flex: 1;
+            background: var(--accent-color);
+            height: 3px;
+            transition: height 0.08s linear;
+        }
+
+        /* 
+           INFO CARD 
+           Container for the visual song information.
+        */
+        #overlay-wrapper {
+            display: flex;
+            align-items: center;
+            background: var(--bg-color);
+            border-radius: 0 0 12px 12px;
+            padding: 12px;
+            width: 420px; 
+            height: 60px;
+            border-left: 6px solid var(--accent-color);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+
+        #thumbnail {
+            width: 100px;
+            height: 56px;
+            border-radius: 4px;
+            object-fit: cover;
+            margin-right: 15px;
+            background: #1a1a1a;
+        }
+
+        .text-info {
+            display: flex;
+            flex-direction: column;
+            color: var(--accent-color);
+            flex-grow: 1;
+            overflow: hidden;
+        }
+
+        #song-title {
+            font-size: 15px;
+            font-weight: bold;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        #channel-name {
+            font-size: 11px;
+            color: #aaaaaa;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        /* The YouTube player is rendered at 0x0 to remain audio-only */
+        #player { position: absolute; top: -9999px; left: -9999px; }
+    </style>
+</head>
+<body>
+
+    <div id="spectrum-container"></div>
+
+    <div id="overlay-wrapper">
+        <img id="thumbnail" src="" alt="">
+        <div class="text-info">
+            <div id="channel-name">INITIALIZING...</div>
+            <div id="song-title">AWAITING SIGNAL</div>
+        </div>
+    </div>
+
+    <div id="player"></div>
+
+    <script>
+        // CONFIGURATION
+        const playlistId = "PLsogBv4yCzquOxtUfDp72qlFIEHjagmHo";
+        let isPlaying = false;
+        const bars = [];
+        const BAR_COUNT = 40;
+
+        // 1. INITIALIZE UI ELEMENTS
+        const specCont = document.getElementById('spectrum-container');
+        for(let i=0; i < BAR_COUNT; i++) {
+            const bar = document.createElement('div');
+            bar.className = 'bar';
+            specCont.appendChild(bar);
+            bars.push(bar);
+        }
+
+        // 2. YOUTUBE IFRAME API LOAD
+        const tag = document.createElement('script');
+        tag.src = "https://www.youtube.com/iframe_api";
+        document.head.appendChild(tag);
+
+        let player;
+        function onYouTubeIframeAPIReady() {
+            player = new YT.Player('player', {
+                height: '0', width: '0',
+                playerVars: { 'listType': 'playlist', 'list': playlistId, 'autoplay': 1, 'loop': 1 },
+                events: {
+                    'onReady': (e) => { e.target.playVideo(); e.target.setLoop(true); },
+                    'onStateChange': onPlayerStateChange
+                }
+            });
+        }
+
+        // 3. EVENT LISTENER FOR OBS WEBSOCKET COMMANDS
+        window.addEventListener('music_cmd', function(event) {
+            const action = event.detail.action;
+            if (action === 'next') player.nextVideo();
+            if (action === 'prev') player.previousVideo();
+            if (action === 'toggle') {
+                const state = player.getPlayerState();
+                state === 1 ? player.pauseVideo() : player.playVideo();
+            }
+        });
+
+        // 4. REACTIVE VISUALIZER LOGIC
+        // Modulates bar height using sine waves and random jitter when music is playing.
+        function renderFrame() {
+            if (!isPlaying) {
+                bars.forEach(bar => bar.style.height = "3px");
+                return;
+            }
+            bars.forEach((bar, i) => {
+                const time = Date.now() * 0.005;
+                const base = Math.sin(time + (i * 0.5)) * 10 + 15;
+                const jitter = Math.random() * 15;
+                bar.style.height = Math.max(3, base + jitter) + "px";
+            });
+            requestAnimationFrame(renderFrame);
+        }
+
+        // 5. PLAYER STATE HANDLING
+        function onPlayerStateChange(event) {
+            // Auto-advance to next song if the current one ends
+            if (event.data === YT.PlayerState.ENDED) player.nextVideo();
+
+            if (event.data === YT.PlayerState.PLAYING) {
+                isPlaying = true;
+                const data = player.getVideoData();
+                document.getElementById('song-title').innerText = data.title;
+                document.getElementById('channel-name').innerText = data.author;
+                document.getElementById('thumbnail').src = `https://img.youtube.com/vi/${data.video_id}/mqdefault.jpg`;
+                renderFrame();
+            } else {
+                isPlaying = false;
+            }
+        }
+    </script>
+</body>
+</html>
