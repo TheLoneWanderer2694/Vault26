@@ -143,7 +143,7 @@
     <div id="overlay-wrapper">
         <img id="thumbnail" src="" alt="">
         <div class="text-info">
-            <div id="channel-name">INITIALIZING...</div>
+            <div id="channel-name">Loading...</div>
             <div id="song-title">AWAITING SIGNAL</div>
         </div>
     </div>
