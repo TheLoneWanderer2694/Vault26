@@ -1,0 +1,154 @@
+<!-- 
+  =============================================================================
+  TWITCH CLIP SHUFFLER OVERLAY (2026 EDITION)
+  =============================================================================
+  
+  DIRECTIONS FOR USE:
+  
+  1. SETUP CLIPS: 
+     Scroll down to the 'const clips' array in the <script> section. 
+     Add your Twitch Clip Slugs (the unique ID at the end of a clip URL).
+  
+  2. HOSTING (CRITICAL): 
+     Twitch security blocks "Local Files" (file:/// path). 
+     You MUST host this file on a secure web server (HTTPS). 
+     Free options: GitHub Pages, Netlify, or Vercel.
+  
+  3. OBS CONFIGURATION:
+     - Add a 'Browser Source' in OBS.
+     - Paste your hosted URL (e.g., https://yourname.github.io/overlay).
+     - Set Width to 1920 and Height to 1080.
+     - DO NOT check "Local File".
+  
+  4. ACTIVATION:
+     - Right-click the Browser Source in OBS and select "Interact".
+     - Click the "INITIALIZE" button on the screen. 
+     - This user gesture is required by browsers to allow autoplaying audio.
+  
+  5. TROUBLESHOOTING:
+     - If video is black but audio plays: Disable "Hardware Acceleration" 
+       in OBS Settings > Advanced and restart OBS.
+     - if "Refused to Connect": Ensure your 'parent' domain in the script 
+       matches your hosting domain.
+  =============================================================================
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Twitch Clip Shuffler</title>
+    <style>
+        :root { 
+            --neon-red: #ff003c; 
+            --black: #050505;
+        }
+
+        /* Essential reset to ensure the border stays at the screen edges */
+        html, body { 
+            margin: 0; padding: 0; 
+            width: 100vw; height: 100vh; 
+            background: black; overflow: hidden; 
+            font-family: 'Segoe UI', sans-serif; 
+            box-sizing: border-box;
+        }
+        
+        /* Main wrapper with the neon-red glow border */
+        #main-wrapper { 
+            width: 100%; height: 100%; 
+            display: flex; flex-direction: column; 
+            border: 5px solid var(--neon-red);
+            box-shadow: inset 0 0 20px var(--neon-red), 0 0 20px var(--neon-red);
+            box-sizing: border-box;
+            position: relative;
+        }
+        
+        /* User Interaction Gate (Bypasses Autoplay Restrictions) */
+        #init-gate {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: radial-gradient(circle, #220000 0%, #000 100%);
+            z-index: 999; display: flex; 
+            flex-direction: column; justify-content: center; align-items: center; 
+            cursor: pointer;
+        }
+
+        #init-gate h1 { 
+            color: var(--neon-red); font-size: 3rem; margin: 0;
+            text-shadow: 0 0 15px var(--neon-red); 
+            letter-spacing: 8px; animation: flicker 2s infinite;
+        }
+
+        iframe { width: 100%; height: 100%; border: none; background: #000; }
+
+        @keyframes flicker {
+            0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% { opacity: 1; }
+            20%, 22%, 24%, 55% { opacity: 0.4; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="init-gate" onclick="startEngine()">
+        <h1>INITIALIZE</h1>
+        <p style="color: #666; letter-spacing: 2px;">[ CLICK TO UNMUTE FEED ]</p>
+    </div>
+
+    <div id="main-wrapper">
+        <iframe id="twitch-frame" allow="autoplay; fullscreen"></iframe>
+    </div>
+
+    <script>
+        /**
+         * CLIP DATA
+         * Add your Twitch Clip slugs to this array.
+         */
+        const clips = [
+            "ClipSlugOne",
+            "ClipSlugTwo"
+        ];
+
+        let lastClipIndex = -1;
+        const ROTATION_TIME = 30; // Seconds until next swap
+
+        /**
+         * Starts the playback engine after user interaction.
+         */
+        function startEngine() {
+            document.getElementById('init-gate').style.display = 'none';
+            playNext();
+        }
+
+        /**
+         * Handles the randomization and URL construction for the Twitch player.
+         */
+        function playNext() {
+            if (clips.length === 0) return;
+
+            let nextIndex;
+            do {
+                nextIndex = Math.floor(Math.random() * clips.length);
+            } while (nextIndex === lastClipIndex && clips.length > 1);
+            
+            lastClipIndex = nextIndex;
+            const slug = clips[nextIndex];
+            
+            /**
+             * Security: Parent domain verification. 
+             * Includes 'localhost' for OBS and the current hosting domain.
+             */
+            const parents = [
+                "localhost",
+                "127.0.0.1",
+                window.location.hostname
+            ].filter(p => p).map(p => `&parent=${p}`).join('');
+
+            const streamUrl = `https://clips.twitch.tv/embed?clip=${slug}${parents}&autoplay=true&muted=false`;
+            document.getElementById('twitch-frame').src = streamUrl;
+            
+            // Queue the next rotation
+            setTimeout(playNext, ROTATION_TIME * 1000);
+        }
+    </script>
+</body>
+</html>
