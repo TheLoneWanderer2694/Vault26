@@ -1,63 +1,85 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
-import time
-from datetime import datetime
+import asyncio
+import websockets
+import json
+from obswebsocket import obsws, requests
 
-# Page configuration
-st.set_page_config(
-    page_title="Real-Time Streaming Dashboard",
-    page_icon="⚡",
-    layout="wide",
-)
+# --- CONFIGURATION ---
+OBS_HOST = "localhost"
+OBS_PORT = 4455
+OBS_PASSWORD = "your_obs_password"
 
-st.title("⚡ Real-Time Operational Metrics")
+SB_HOST = "127.0.0.1"
+SB_PORT = 8080 # Default Streamer.bot Websocket port
 
-# Create placeholders for the UI elements
-metric_placeholder = st.empty()
-chart_placeholder = st.empty()
-table_placeholder = st.empty()
+st.set_page_config(page_title="Stream Control Center", layout="wide")
 
-# Initialize dummy data
-def get_initial_data():
-    return pd.DataFrame({
-        'Timestamp': [datetime.now()],
-        'Value': [np.random.randint(40, 60)]
-    })
+## --- OBS CONTROL FUNCTIONS ---
+def get_obs_client():
+    try:
+        client = obsws(OBS_HOST, OBS_PORT, OBS_PASSWORD)
+        client.connect()
+        return client
+    except Exception as e:
+        st.error(f"OBS Connection Failed: {e}")
+        return None
 
-data = get_initial_data()
+## --- STREAMER.BOT DATA ---
+# We use a placeholder to update live events without refreshing the whole page
+st.title("🎮 Broadcast Control Dashboard")
 
-# Simulation Loop
-for i in range(100):
-    # 1. Generate "New" Streaming Data
-    new_row = {
-        'Timestamp': datetime.now(),
-        'Value': data['Value'].iloc[-1] + np.random.randint(-5, 6)
-    }
-    data = pd.concat([data, pd.DataFrame([new_row])], ignore_index=True)
+col1, col2 = st.columns([1, 2])
+
+with col1:
+    st.subheader("🎬 OBS Scenes")
+    obs = get_obs_client()
+    if obs:
+        scenes = obs.call(requests.GetSceneList())
+        for scene in scenes.getScenes():
+            scene_name = scene['sceneName']
+            if st.button(f"Switch to: {scene_name}", key=scene_name):
+                obs.call(requests.SetCurrentProgramScene(sceneName=scene_name))
+                st.success(f"Switched to {scene_name}")
+        obs.disconnect()
+
+with col2:
+    st.subheader("🔔 Live Streamer.bot Events")
+    event_placeholder = st.empty()
     
-    # Keep only the last 20 data points for the view
-    display_df = data.tail(20)
+    # This async function listens to Streamer.bot events
+    async def listen_to_streamerbot():
+        uri = f"ws://{SB_HOST}:{SB_PORT}/"
+        async with websockets.connect(uri) as websocket:
+            # Subscribe to events (General, Twitch, etc.)
+            subscribe_msg = {
+                "request": "Subscribe",
+                "id": "123",
+                "events": {
+                    "Twitch": ["Follow", "Cheers", "Subscription"],
+                    "General": ["Custom"]
+                }
+            }
+            await websocket.send(json.dumps(subscribe_msg))
+            
+            recent_events = []
+            
+            while True:
+                message = await websocket.recv()
+                data = json.loads(message)
+                
+                # Format the timestamp and event type
+                if "event" in data:
+                    event_type = data["event"]["type"]
+                    user = data["data"].get("user", "Unknown")
+                    recent_events.insert(0, f"**{event_type}**: {user} just interacted!")
+                
+                # Keep only last 10 events
+                recent_events = recent_events[:10]
+                
+                with event_placeholder.container():
+                    for ev in recent_events:
+                        st.write(ev)
 
-    # 2. Update Metrics (KPIs)
-    with metric_placeholder.container():
-        col1, col2, col3 = st.columns(3)
-        current_val = display_df['Value'].iloc[-1]
-        prev_val = display_df['Value'].iloc[-2] if len(display_df) > 1 else current_val
-        
-        col1.metric("System Load", f"{current_val}%", f"{current_val - prev_val}%")
-        col2.metric("Active Users", np.random.randint(1000, 1200), "4%")
-        col3.metric("Uptime", "99.99%", "0.01%")
-
-    # 3. Update Chart
-    with chart_placeholder.container():
-        st.subheader("Live Data Feed")
-        st.line_chart(display_df.set_index('Timestamp'))
-
-    # 4. Update Data Table
-    with table_placeholder.container():
-        st.subheader("Recent Logs")
-        st.dataframe(display_df.sort_values('Timestamp', ascending=False), use_container_width=True)
-
-    # Control the "Stream" speed
-    time.sleep(1)
+    # Start the websocket listener
+    if st.button("Start Listening to Events"):
+        asyncio.run(listen_to_streamerbot())
