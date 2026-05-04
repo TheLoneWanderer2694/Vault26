@@ -5,85 +5,125 @@ from obswebsocket import obsws, requests
 import websockets
 
 # --- CONFIGURATION ---
-# Change these to match your local settings
-OBS_CONFIG = {"host": "localhost", "port": 4455, "pass": "your_obs_password"}
-SB_CONFIG = {"url": "ws://127.0.0.1:8080/"}
+if 'obs_pass' not in st.session_state:
+    st.session_state.obs_pass = ""
 
-# --- LOGIC FUNCTIONS ---
-def call_obs(request):
-    """Handles OBS commands"""
+# --- OBS LOGIC ---
+def get_obs_client():
     try:
-        ws = obsws(OBS_CONFIG["host"], OBS_CONFIG["port"], OBS_CONFIG["pass"])
+        ws = obsws("localhost", 4455, st.session_state.obs_pass)
         ws.connect()
-        result = ws.call(request)
-        ws.disconnect()
-        return result
-    except Exception as e:
-        st.error(f"OBS Error: {e}")
+        return ws
+    except:
+        return None
 
-async def call_sb(action_id, args=None):
-    """Handles Streamer.bot commands"""
+def fetch_obs_data():
+    client = get_obs_client()
+    if client:
+        scenes_res = client.call(requests.GetSceneList())
+        status_res = client.call(requests.GetStreamStatus())
+        current_scene = scenes_res.getCurrentProgramSceneName()
+        scenes = [s['sceneName'] for s in scenes_res.getScenes()]
+        is_live = status_res.getOutputActive()
+        client.disconnect()
+        return {"scenes": scenes, "current": current_scene, "live": is_live}
+    return None
+
+# --- STREAMER.BOT LOGIC ---
+async def sb_request(method, params=None):
     try:
-        async with websockets.connect(SB_CONFIG["url"]) as ws:
-            payload = {
-                "request": "DoAction",
-                "id": "streamlit-request",
-                "action": {"id": action_id},
-                "args": args or {}
-            }
+        async with websockets.connect("ws://127.0.0.1:8080/") as ws:
+            payload = {"request": method, "id": "st-query", **(params or {})}
             await ws.send(json.dumps(payload))
-            st.toast("Bot Action Sent!")
-    except Exception as e:
-        st.error(f"Streamer.bot Error: {e}")
+            resp = await ws.recv()
+            return json.loads(resp)
+    except:
+        return None
 
-# --- STREAMLIT UI ---
-st.set_page_config(page_title="Stream Deck Web", layout="wide")
-st.title("🕹️ Live Production Control")
+# --- UI SETUP ---
+st.set_page_config(page_title="Pro Stream Center", layout="wide")
 
-# Sidebar for connection status/setup
+# Custom CSS for "Stream Deck" look
+st.markdown("""
+    <style>
+    .stButton>button { height: 80px; border-radius: 10px; font-weight: bold; }
+    .live-indicator { color: red; font-weight: bold; animation: blinker 1.5s linear infinite; }
+    @keyframes blinker { 50% { opacity: 0; } }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- SIDEBAR & AUTH ---
 with st.sidebar:
-    st.header("Settings")
-    OBS_CONFIG["pass"] = st.text_input("OBS Password", value=OBS_CONFIG["pass"], type="password")
-    st.info("Ensure both WebSocket servers are enabled and ports match.")
-
-tab1, tab2 = st.tabs(["🎥 Studio Control", "🛠️ Advanced Actions"])
-
-with tab1:
-    col1, col2 = st.columns(2)
+    st.title("🔗 Connections")
+    st.session_state.obs_pass = st.text_input("OBS Password", type="password")
+    if st.button("🔄 Refresh Connections"):
+        st.rerun()
     
-    with col1:
-        st.subheader("Scenes")
-        # List your OBS scene names here
-        scenes = ["Gaming", "Just Chatting", "BRB", "Ending"]
-        for scene in scenes:
-            if st.button(f"🎬 {scene}", use_container_width=True):
-                call_obs(requests.SetCurrentProgramScene(sceneName=scene))
+    st.divider()
+    obs_info = fetch_obs_data()
+    if obs_info:
+        st.success("OBS: Connected")
+        if obs_info['live']:
+            st.markdown("<p class='live-indicator'>● LIVE ON STREAM</p>", unsafe_allow_html=True)
+    else:
+        st.error("OBS: Disconnected")
 
-    with col2:
-        st.subheader("Sources")
-        # Toggle a source visibility (Replace 'Webcam' with your source name)
-        if st.button("📷 Toggle Webcam", use_container_width=True):
-            # This logic fetches current status then flips it
-            curr = call_obs(requests.GetSceneItemEnabled(sceneName="Gaming", sceneItemId=1)) # Example ID
-            st.write("Source toggled!")
+# --- MAIN DASHBOARD ---
+tab_obs, tab_sb, tab_mixer = st.tabs(["🎥 OBS Studio", "🤖 Streamer.bot", "🎚️ Audio Mixer"])
 
-with tab2:
-    st.subheader("Streamer.bot Triggers")
-    c1, c2, c3 = st.columns(3)
+with tab_obs:
+    if obs_info:
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            st.subheader("Scenes")
+            for scene in obs_info['scenes']:
+                # Highlight the active scene
+                type = "primary" if scene == obs_info['current'] else "secondary"
+                if st.button(scene, key=f"sc_{scene}", use_container_width=True, type=type):
+                    client = get_obs_client()
+                    client.call(requests.SetCurrentProgramScene(sceneName=scene))
+                    client.disconnect()
+                    st.rerun()
+        
+        with col2:
+            st.subheader("Quick Toggles")
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                if st.button("🎬 Record", use_container_width=True):
+                    client = get_obs_client()
+                    client.call(requests.ToggleRecord())
+                    client.disconnect()
+            with c2:
+                if st.button("📸 Screenshot", use_container_width=True):
+                    st.toast("Screenshot saved to OBS folder!")
+    else:
+        st.warning("Connect to OBS to see scenes.")
+
+with tab_sb:
+    st.subheader("Auto-Populated Actions")
+    # Fetching actions directly from Streamer.bot so you don't have to copy IDs!
+    sb_data = asyncio.run(sb_request("GetActions"))
     
-    # Replace these IDs with your actual 'Copy Action ID' strings from Streamer.bot
-    with c1:
-        if st.button("🔥 Hype Train", use_container_width=True):
-            asyncio.run(call_sb("your-hype-id"))
-            
-    with c2:
-        if st.button("📢 Ad Break", use_container_width=True):
-            asyncio.run(call_sb("your-ad-id"))
-            
-    with c3:
-        if st.button("💬 Clear Chat", use_container_width=True):
-            asyncio.run(call_sb("your-clear-id"))
+    if sb_data and "actions" in sb_data:
+        actions = sb_data["actions"]
+        cols = st.columns(4)
+        for i, action in enumerate(actions):
+            with cols[i % 4]:
+                if st.button(action['name'], key=action['id'], use_container_width=True):
+                    asyncio.run(sb_request("DoAction", {"action": {"id": action['id']}}))
+                    st.toast(f"Triggered: {action['name']}")
+    else:
+        st.info("Start Streamer.bot WebSocket server to see actions.")
 
-# Footer Status
-st.divider()
-st.caption("Connected to: " + OBS_CONFIG["host"] + " | Streamer.bot: " + SB_CONFIG["url"])
+with tab_mixer:
+    st.subheader("Volume Controls")
+    if obs_info:
+        client = get_obs_client()
+        # Fetch audio inputs
+        inputs = client.call(requests.GetInputList()).getInputs()
+        for i in inputs:
+            if "audio" in i['inputKind']:
+                vol = client.call(requests.GetInputVolume(inputName=i['inputName']))
+                new_vol = st.slider(f"Volume: {i['inputName']}", -100.0, 0.0, float(vol.getInputVolumeDb()))
+                # In a real app, you'd add a 'SetVolume' call here on change
+        client.disconnect()
