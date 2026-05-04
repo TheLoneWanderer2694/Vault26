@@ -4,84 +4,89 @@ import json
 from obswebsocket import obsws, requests
 import websockets
 
-# --- CONFIGURATION ---
-# We use your specific IP here so the dashboard knows exactly where to look
-TARGET_IP = "127.0.0.1" 
-OBS_PORT = 4455
-SB_PORT = 8080
+# --- CONFIGURATION DEFAULTS ---
+# You can set these to different IPs if your services are on different PCs
+DEFAULT_OBS_IP = "192.168.10.110" 
+DEFAULT_SB_IP = "192.168.10.110" 
 
+# --- SESSION STATE INITIALIZATION ---
 if 'obs_pass' not in st.session_state:
     st.session_state.obs_pass = ""
 
 # --- OBS LOGIC ---
-def get_obs_client():
+def get_obs_client(ip, port, password):
     try:
-        # Changed 'localhost' to TARGET_IP
-        ws = obsws(TARGET_IP, OBS_PORT, st.session_state.obs_pass)
+        ws = obsws(ip, port, password)
         ws.connect()
         return ws
-    except:
+    except Exception as e:
         return None
 
 # --- STREAMER.BOT LOGIC ---
-async def sb_request(method, params=None):
+async def sb_request(ip, port, method, params=None):
+    uri = f"ws://{ip}:{port}/"
     try:
-        # Changed '127.0.0.1' to TARGET_IP
-        uri = f"ws://{TARGET_IP}:{SB_PORT}/"
-        async with websockets.connect(uri) as ws:
-            payload = {"request": method, "id": "st-query", **(params or {})}
+        async with websockets.connect(uri, open_timeout=5) as ws:
+            payload = {"request": method, "id": "st-split", **(params or {})}
             await ws.send(json.dumps(payload))
             resp = await ws.recv()
             return json.loads(resp)
     except:
         return None
 
-# --- UI LOGIC ---
-st.set_page_config(page_title="Remote Stream Deck", layout="wide")
+# --- UI SETUP ---
+st.set_page_config(page_title="Split IP Stream Control", layout="wide")
 
 with st.sidebar:
-    st.title("🌐 Network Control")
-    st.info(f"Connecting to PC at: {TARGET_IP}")
-    st.session_state.obs_pass = st.text_input("OBS Password", type="password")
+    st.header("🔌 Connection Manager")
     
-    if st.button("🔄 Force Refresh"):
+    with st.expander("🎥 OBS Settings", expanded=True):
+        obs_ip = st.text_input("OBS IP Address", value=DEFAULT_OBS_IP)
+        obs_port = st.number_input("OBS Port", value=4455)
+        st.session_state.obs_pass = st.text_input("OBS Password", type="password")
+    
+    st.divider()
+    
+    with st.expander("🤖 Streamer.bot Settings", expanded=True):
+        sb_ip = st.text_input("Bot IP Address", value=DEFAULT_SB_IP)
+        sb_port = st.number_input("Bot Port", value=8080)
+    
+    if st.button("🔄 Reconnect All", use_container_width=True):
         st.rerun()
 
 # --- MAIN INTERFACE ---
-tab_obs, tab_sb = st.tabs(["🎥 OBS Control", "🤖 Bot Actions"])
+tab_obs, tab_sb = st.tabs(["OBS STUDIO", "STREAMER.BOT"])
 
 with tab_obs:
-    obs_data = None
-    client = get_obs_client()
+    client = get_obs_client(obs_ip, obs_port, st.session_state.obs_pass)
     if client:
-        scenes_res = client.call(requests.GetSceneList())
-        scenes = [s['sceneName'] for s in scenes_res.getScenes()]
-        current = scenes_res.getCurrentProgramSceneName()
+        st.success(f"Connected to OBS at {obs_ip}")
+        res = client.call(requests.GetSceneList())
+        scenes = [s['sceneName'] for s in res.getScenes()]
+        current = res.getCurrentProgramSceneName()
         
-        st.subheader("Switch Scenes")
         cols = st.columns(4)
         for i, scene in enumerate(scenes):
             with cols[i % 4]:
-                is_active = (scene == current)
                 if st.button(scene, key=f"obs_{scene}", use_container_width=True, 
-                             type="primary" if is_active else "secondary"):
+                             type="primary" if scene == current else "secondary"):
                     client.call(requests.SetCurrentProgramScene(sceneName=scene))
                     st.rerun()
         client.disconnect()
     else:
-        st.warning(f"Could not reach OBS at {TARGET_IP}:{OBS_PORT}")
+        st.error(f"Failed to connect to OBS at {obs_ip}:{obs_port}")
 
 with tab_sb:
-    st.subheader("Bot Actions")
-    sb_data = asyncio.run(sb_request("GetActions"))
-    
+    sb_data = asyncio.run(sb_request(sb_ip, sb_port, "GetActions"))
     if sb_data and "actions" in sb_data:
+        st.success(f"Connected to Streamer.bot at {sb_ip}")
         actions = sb_data["actions"]
         cols = st.columns(4)
         for i, action in enumerate(actions):
+            if not action.get('name'): continue
             with cols[i % 4]:
                 if st.button(action['name'], key=action['id'], use_container_width=True):
-                    asyncio.run(sb_request("DoAction", {"action": {"id": action['id']}}))
-                    st.toast(f"Executed {action['name']}")
+                    asyncio.run(sb_request(sb_ip, sb_port, "DoAction", {"action": {"id": action['id']}}))
+                    st.toast(f"Triggered: {action['name']}")
     else:
-        st.warning(f"Could not reach Streamer.bot at {TARGET_IP}:{SB_PORT}")
+        st.error(f"Failed to connect to Streamer.bot at {sb_ip}:{sb_port}")
