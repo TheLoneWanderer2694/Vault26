@@ -6,7 +6,7 @@ import websockets
 
 # --- CONFIGURATION ---
 # We use your specific IP here so the dashboard knows exactly where to look
-TARGET_IP = "192.168.10.110" 
+TARGET_IP = "127.0.0.1" 
 OBS_PORT = 4455
 SB_PORT = 8080
 
