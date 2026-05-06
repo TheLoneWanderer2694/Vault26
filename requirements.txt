@@ -1,3 +1,0 @@
-streamlit
-obs-websocket-py
-websockets
